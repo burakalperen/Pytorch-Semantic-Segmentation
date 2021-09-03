@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
@@ -19,12 +18,19 @@ def predict_mask(output):
     # num_zeros = (prediction==0).sum()
     # num_ones = (prediction==1).sum()
     # num_twos = (prediction==2).sum()
-
-    prediction = prediction.astype("uint8")
-    prediction = np.where(prediction==0,0,prediction)
-    prediction = np.where(prediction==1,72,prediction)
-    prediction = np.where(prediction==2,247,prediction)
-    cv2.imshow("Prediction",prediction)
+    mask = prediction.astype("uint8")
+    #reverse of label_color map in dataset script
+    label_color_map = {
+        0:0,
+        1:147,
+        2:72
+    }
+    for k in label_color_map:
+        mask[mask==k] = label_color_map[k]
+    # mask = np.where(mask==0,0,mask)
+    # mask = np.where(mask==1,72,mask)
+    # mask = np.where(mask==2,247,mask)
+    cv2.imshow("mask",mask)
     cv2.waitKey(0)
 
 
