@@ -67,16 +67,18 @@ class _ASPP(nn.Module):
         feat3 = self.conv_3x3_2(feature_map)
         feat4 = self.conv_3x3_3(feature_map)
         feat5 = self.pool(feature_map)
-        print(feat1.shape,feat2.shape,feat3.shape,feat4.shape,feat5.shape)
+        #print(feat1.shape,feat2.shape,feat3.shape,feat4.shape,feat5.shape)
         x = torch.cat((feat1,feat2,feat3,feat4,feat5),dim = 1)
         x = self.project(x)
+        x = self.out(x)
+
         return x
 
 if __name__ == "__main__":
     device = torch.device("cuda:0")
-    model = _ASPP(512,(6,12,18),bias = False).to(device)
+    model = _ASPP(3,512,(6,12,18),bias = False).to(device)
 
     x = torch.randn(2,512,100,100).to(device)
 
     out = model(x)
-    print(x.shape)
+    print(out.shape)

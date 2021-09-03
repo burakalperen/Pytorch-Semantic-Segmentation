@@ -1,15 +1,24 @@
+from numpy.core.arrayprint import BoolFormat
 import torch
 import torch.nn as nn
 import torchvision.models as models
 from torchsummary import summary
-from torchvision.models.resnet import Bottleneck
-from torchvision.models.vgg import make_layers
+from torchvision.models.resnet import BasicBlock, Bottleneck, resnet152, resnet34
+import torch.nn.functional as F
+
+# resnet18_os16, resnet34_os16 --> batch_size, 512, h/16, w/16
+# resnet18_os8, resnet34_os8 --> batch_size, 512,h/8,w/8
+# bottleneck_os16 --> 50,101,152 
+# basicblock_os16 --> 18,34
+# basicblock_os8 --> 18,34
 
 # deeplab kanal olarak 512 alıyor
 
 
 def make_layer(block, in_channels, channels, num_blocks, stride=1, dilation=1):
     strides = [stride] + [1]*(num_blocks - 1) # (stride == 2, num_blocks == 4 --> strides == [2, 1, 1, 1])
+    # resnet18_basicblock_os16 = in_channels=256,channels=512,num_blocks=2,stride=1,dilation=2 (stride = 1, num_block = 2 --> strides =[2,1])
+
 
     blocks = []
     for stride in strides:
@@ -17,54 +26,218 @@ def make_layer(block, in_channels, channels, num_blocks, stride=1, dilation=1):
         in_channels = block.expansion*channels
 
     layer = nn.Sequential(*blocks) # (*blocks: call with unpacked list entires as arguments)
-
     return layer
 
-# def make_layer(block, in_channels, channels, num_blocks, stride = 1, dilation = 1):
-#     strides = [stride] + [1]*(num_blocks - 1)
+class Bottleneck(nn.Module):
+    expansion = 4
 
-#     blocks = []
-#     for stride in strides:
-#         blocks.append(block(in_channels=in_channels, channels=channels, stride=stride, dilation=dilation))
-#         in_channels = block.expansion*channels
+    def __init__(self, in_channels, channels, stride=1, dilation=1):
+        super(Bottleneck, self).__init__()
 
-#     layer = nn.Sequential(*blocks)
-#     return layer
+        out_channels = self.expansion*channels
 
-class ResNet_Bottleneck_OS16(nn.Module):
+        self.conv1 = nn.Conv2d(in_channels, channels, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(channels)
+
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=stride, padding=dilation, dilation=dilation, bias=False)
+        self.bn2 = nn.BatchNorm2d(channels)
+
+        self.conv3 = nn.Conv2d(channels, out_channels, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(out_channels)
+
+        if (stride != 1) or (in_channels != out_channels):
+            conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False)
+            bn = nn.BatchNorm2d(out_channels)
+            self.downsample = nn.Sequential(conv, bn)
+        else:
+            self.downsample = nn.Sequential()
+
+
+    def forward(self, x):
+        # (x has shape: (batch_size, in_channels, h, w))
+
+        out = F.relu(self.bn1(self.conv1(x))) # (shape: (batch_size, channels, h, w))
+        out = F.relu(self.bn2(self.conv2(out))) # (shape: (batch_size, channels, h, w) if stride == 1, (batch_size, channels, h/2, w/2) if stride == 2)
+        out = self.bn3(self.conv3(out)) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
+
+        out = out + self.downsample(x) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
+
+        out = F.relu(out) # (shape: (batch_size, out_channels, h, w) if stride == 1, (batch_size, out_channels, h/2, w/2) if stride == 2)
+
+        return out  
+
+
+
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self,in_channels, channels, stride=1, dilation=1):
+        super(BasicBlock,self).__init__()
+        
+        out_channels = self.expansion*channels
+
+        self.conv1 = nn.Conv2d(in_channels, channels, kernel_size=3, stride=stride, padding=dilation, dilation=dilation, bias=False)
+        self.bn1 = nn.BatchNorm2d(channels)
+
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=dilation, dilation=dilation, bias=False)
+        self.bn2 = nn.BatchNorm2d(channels)
+
+        if (stride != 1) or (in_channels != out_channels):
+            conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False)
+            bn = nn.BatchNorm2d(out_channels)
+            self.downsample = nn.Sequential(conv, bn)
+        else:
+            self.downsample = nn.Sequential()
+
+    def forward(self,x):
+        # (x has shape: (batch_size, in_channels, h, w))
+
+        out = F.relu(self.bn1(self.conv1(x))) # (shape: (batch_size, channels, h, w) if stride == 1, (batch_size, channels, h/2, w/2) if stride == 2)
+        out = self.bn2(self.conv2(out)) # (shape: (batch_size, channels, h, w) if stride == 1, (batch_size, channels, h/2, w/2) if stride == 2)
+
+        out = out + self.downsample(x) # (shape: (batch_size, channels, h, w) if stride == 1, (batch_size, channels, h/2, w/2) if stride == 2)
+
+        out = F.relu(out) # (shape: (batch_size, channels, h, w) if stride == 1, (batch_size, channels, h/2, w/2) if stride == 2)
+
+        return out
+
+class ResNet_BasicBlock_OS8(nn.Module):
+    def __init__(self,num_layers):
+        super(ResNet_BasicBlock_OS8,self).__init__()
+
+        if num_layers == 18:
+            resnet = models.resnet18()
+            resnet.load_state_dict(torch.load("/home/burak/.cache/torch/hub/checkpoints/resnet18-5c106cde.pth"))
+            self.resnet = nn.Sequential(*list(resnet.children())[:-4])
+
+            num_blocks_layer4 = 2
+            num_blocks_layer5 = 2
+            print("pretrained resnet18")
+        elif num_layers == 34:
+            resnet = models.resnet34()
+            resnet.load_state_dict(torch.load("/home/burak/.cache/torch/hub/checkpoints/resnet34-333f7ec4.pth"))
+            self.resnet = nn.Sequential(*list(resnet.children())[:-4])
+
+            num_blocks_layer4 = 6
+            num_blocks_layer5 = 6
+            print("pretrained resnet34")
+        else:
+            raise Exception("num_layers must be in {18,34}!")
+
+        self.layer4 = make_layer(BasicBlock, in_channels=128, channels=256, num_blocks=num_blocks_layer4, stride=1, dilation=2)
+        self.layer5 = make_layer(BasicBlock, in_channels=256, channels=512, num_blocks=num_blocks_layer5, stride=1, dilation=2)
+
+    def forward(self,x):
+        # x has shape (batch_size, 3, h, w)
+        # pass x pretrained resnet
+        c3 = self.resnet(x) # (shape: (batch_size, 128, h/8, w/8)) # so its name is os8(output shape 8)
+
+        output = self.layer4(c3)
+        output = self.layer5(output)
+
+        return output
+
+class ResNet_BasicBlock_OS16(nn.Module):
+    def __init__(self,num_layers):
+        super(ResNet_BasicBlock_OS16,self).__init__()
+
+
+        if num_layers == 18:
+            resnet = models.resnet18()
+            resnet.load_state_dict(torch.load("/home/burak/.cache/torch/hub/checkpoints/resnet18-5c106cde.pth"))
+            self.resnet = nn.Sequential(*list(resnet.children())[:-3])
+            num_blocks = 2
+            print("pretrained resnet18")
+        elif num_layers == 34:
+            resnet = models.resnet34()
+            resnet.load_state_dict(torch.load("/home/burak/.cache/torch/hub/checkpoints/resnet34-333f7ec4.pth"))
+            self.resnet =  nn.Sequential(*list(resnet.children())[:-3])
+            num_blocks = 3
+            print("pretrained resnet34")
+        
+        else:
+            raise Exception("num layers must be in {18,34}!")
+
+        self.layer5 = make_layer(BasicBlock,in_channels=256,channels=512,num_blocks=num_blocks,stride=1,dilation=2)
+
+    def forward(self,x):
+        # x has shape (batch_size,3,h,w)
+
+        # pass x to pretrained ResNet:
+        c4 = self.resnet(x) # (shape: (batch_size, 256, h/16, w/16)) (it's called c4 since 16 == 2^4)
+
+        output = self.layer5(c4) # (shape: (batch_size, 256, h/16, w/16))
+
+        return output
+
+class ResNet_Bottleneck_OS16(nn.Module): # output shape: 
     def __init__(self,num_layers):
         super(ResNet_Bottleneck_OS16,self).__init__()
 
         if num_layers == 50:
             resnet = models.resnet50()
+            resnet.load_state_dict(torch.load("/home/burak/.cache/torch/hub/checkpoints/resnet50-19c8e357.pth"))
             self.resnet = nn.Sequential(*list(resnet.children())[:-3]) # 7-8 gitti
             print("pretrained resnet50")
         elif num_layers == 101:
             resnet = models.resnet101()
+            resnet.load_state_dict(torch.load("/home/burak/.cache/torch/hub/checkpoints/resnet101-5d3b4d8f.pth"))
             self.resnet = nn.Sequential(*list(resnet.children())[:-3])
             print("pretrained resnet101")
 
         elif num_layers == 152:
-            resnet = models.resnet152()
-            self.resnet = nn.Sequential(*list(resnet.childrenn())[:-3])
+            resnet = models.resnet152(torch.load("/home/burak/.cache/torch/hub/checkpoints/resnet152-b121ed2d.pth"))
+            self.resnet = nn.Sequential(*list(resnet.children())[:-3])
             print("pretrained resnet152")
         else:
             raise Exception("num_layers must be in {50, 101, 152}")
 
-        self.layer_5 = make_layer(Bottleneck, in_channels=4*256, channels=512, num_blocks=3, stride=1, dilation=2)
+        self.layer5 = make_layer(Bottleneck, in_channels=4*256, channels=512, num_blocks=3, stride=1, dilation=2)
 
-    def forward(self,x):
-        c4 = self.resnet(x)
-        output = self.layer_5(c4)
+    def forward(self, x):
+        # (x has shape (batch_size, 3, h, w))
+
+        # pass x through (parts of) the pretrained ResNet:
+        c4 = self.resnet(x) # (shape: (batch_size, 4*256, h/16, w/16)) (it's called c4 since 16 == 2^4)
+
+        output = self.layer5(c4) # (shape: (batch_size, 4*512, h/16, w/16))
+
         return output
+
+def ResNet18_OS16():
+    return ResNet_BasicBlock_OS16(num_layers = 18)
+
+def ResNet34_OS16():
+    return ResNet_BasicBlock_OS16(num_layers = 34)
+
+def ResNet18_OS8():
+    return ResNet_BasicBlock_OS8(num_layers = 18)
+
+def ResNet34_OS8():
+    return ResNet_BasicBlock_OS8(num_layers = 34)
+
+def ResNet50_OS16():
+    return ResNet_Bottleneck_OS16(num_layers=50)
+
+def ResNet101_OS16():
+    return ResNet_Bottleneck_OS16(num_layers=101)
+
+def ResNet152_OS16():
+    return ResNet_Bottleneck_OS16(num_layers=152)
 
 
 if __name__ == "__main__":
-    resnet = models.resnet50()
-    
-    model_2 = nn.Sequential(*list(resnet.children())[:-3])
+    device = torch.device("cuda")
+    resnet = ResNet152_OS16()
+    resnet = resnet.to(device)
 
-    #summary(model_2.cuda(),(3,224,224))
+    
+    # summary(resnet,(3,224,224))
+
+    x = torch.randn(2,3,248,248).to(device)
+
+    out = resnet(x)
+    print(out.shape)
 
     # print(resnet)
     # print("************************************************")
@@ -73,12 +246,7 @@ if __name__ == "__main__":
     # print("************************************************")
     # print(model_2)
 
-    # bottleneck_os16 --> 50,101,152 
-    # basicblock_os16 --> 18,34
-    # basicblock_os8 --> 18,34
 
+   
 
-
-    layer5 = make_layer(Bottleneck, in_channels=4*256, channels=512, num_blocks=3, stride=1, dilation=2)
-
-    print(layer5)
+    
