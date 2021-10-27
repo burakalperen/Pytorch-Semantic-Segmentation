@@ -5,7 +5,7 @@ import torch
 from PIL import Image
 from natsort import natsorted
 import numpy as np
-import cv2
+import PIL
 from torchvision.transforms.functional import to_tensor
 import torch.nn as nn
 
@@ -58,8 +58,8 @@ class CustomDataset(Dataset):
         print(f"Image size before resize: {image.size}")
         print(f"Mask size before resize: {mask.size}")
         
-        image = image.resize((image.size[0]//self.resize_ratio,image.size[1]//self.resize_ratio))
-        mask = mask.resize((mask.size[0]//self.resize_ratio,mask.size[1]//self.resize_ratio))
+        image = image.resize((image.size[0]//self.resize_ratio,image.size[1]//self.resize_ratio),resample = PIL.Image.NEAREST)
+        mask = mask.resize((mask.size[0]//self.resize_ratio,mask.size[1]//self.resize_ratio),resample = PIL.Image.NEAREST)
         
         print(f"Image size after resize: {image.size}")
         print(f"Mask size after resize: {mask.size}\n")
